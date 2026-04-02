@@ -1,6 +1,6 @@
 import sys
-# sys.path.append("tool")  # 把文件夹加入路径
-# import tool.pdf2md as pdf2md
+sys.path.append("tool")  # 把文件夹加入路径
+import tool.pdf2md as pdf2md
 import json
 import os
 import re
@@ -13,13 +13,13 @@ pdf_path = "D:\\apitest\\input\\resume"
 output_path = "D:\\apitest\\output\\resume"
 json_output_path = ".\\output\\json"
 
-# for filename in os.listdir(pdf_path):
-#     if filename.endswith(".pdf"):
-#         pdf_file = os.path.join(pdf_path, filename)
-#         if not os.path.exists(output_path):
-#             os.makedirs(output_path)
-#         markdown_file = os.path.join(output_path, filename.replace(".pdf", ".md"))
-#         pdf2md.convert_pdf_to_markdown(pdf_file, markdown_file)
+for filename in os.listdir(pdf_path):
+    if filename.endswith(".pdf"):
+        pdf_file = os.path.join(pdf_path, filename)
+        if not os.path.exists(output_path):
+            os.makedirs(output_path)
+        markdown_file = os.path.join(output_path, filename.replace(".pdf", ".md"))
+        pdf2md.convert_pdf_to_markdown(pdf_file, markdown_file)
 
 ##大模型llm api 调用
 load_dotenv()
