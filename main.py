@@ -9,9 +9,10 @@ from openai import OpenAI
 
 PROMPT_VERSION = "json_v1_2026-04-02"
 ## 遍历文件夹中的pdf文件，批量转换成markdown文件
-pdf_path = "D:\\apitest\\input\\resume"
-output_path = "D:\\apitest\\output\\resume"
-json_output_path = ".\\output\\json"
+## 改成相对路径，方便在不同环境运行
+pdf_path = "./input/resume"
+output_path = "./output/resume"
+json_output_path = "./output/json"
 
 for filename in os.listdir(pdf_path):
     if filename.endswith(".pdf"):
