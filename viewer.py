@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -10,6 +11,88 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 JSON_DIR = ROOT_DIR / "output" / "json"
+INTERVIEW_RECORDS_FILE = ROOT_DIR / "output" / "interview_records.json"
+RECORDS_LOCK = threading.Lock()
+CURRENT_SERVER = None
+
+
+def load_interview_records() -> dict:
+  if not INTERVIEW_RECORDS_FILE.exists():
+    return {}
+
+  try:
+    with INTERVIEW_RECORDS_FILE.open("r", encoding="utf-8") as handle:
+      data = json.load(handle)
+  except Exception:
+    return {}
+
+  return data if isinstance(data, dict) else {}
+
+
+def save_interview_records(records: dict) -> None:
+  INTERVIEW_RECORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+  with INTERVIEW_RECORDS_FILE.open("w", encoding="utf-8") as handle:
+    json.dump(records, handle, ensure_ascii=False, indent=2)
+
+
+def append_interview_record(file_name: str, interviewer: str, scores: dict, comment: str) -> dict:
+  safe_name = os.path.basename(file_name)
+  if not safe_name:
+    raise ValueError("file_name is required")
+
+  target = JSON_DIR / safe_name
+  if not target.exists() or target.suffix.lower() != ".json":
+    raise ValueError("invalid file_name")
+
+  clean_scores = {}
+  score_keys = ["technical", "communication", "culture_fit", "overall"]
+  for key in score_keys:
+    value = scores.get(key, 0) if isinstance(scores, dict) else 0
+    try:
+      numeric = float(value)
+    except (TypeError, ValueError):
+      numeric = 0
+    clean_scores[key] = max(0, min(10, numeric))
+
+  record = {
+    "interviewer": (interviewer or "匿名面试官").strip() or "匿名面试官",
+    "scores": clean_scores,
+    "comment": (comment or "").strip(),
+    "created_at": datetime.now().isoformat(timespec="seconds"),
+  }
+
+  with RECORDS_LOCK:
+    records = load_interview_records()
+    rows = records.get(safe_name)
+    if not isinstance(rows, list):
+      rows = []
+    rows.append(record)
+    records[safe_name] = rows
+    save_interview_records(records)
+
+  return record
+
+
+def get_interview_records(file_name: str) -> list[dict]:
+  safe_name = os.path.basename(file_name)
+  if not safe_name:
+    return []
+
+  with RECORDS_LOCK:
+    records = load_interview_records()
+
+  rows = records.get(safe_name)
+  return rows if isinstance(rows, list) else []
+
+
+def request_server_shutdown() -> None:
+  def _exit_process() -> None:
+    try:
+      os._exit(0)
+    except Exception:
+      pass
+
+  threading.Timer(0.2, _exit_process).start()
 
 
 HTML_TEMPLATE = """<!doctype html>
@@ -465,6 +548,92 @@ HTML_TEMPLATE = """<!doctype html>
       text-align: center;
     }
 
+    .interview-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .input,
+    .textarea {
+      width: 100%;
+      border: 1px solid #dbe5f6;
+      border-radius: 10px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    .input:focus,
+    .textarea:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+    }
+
+    .button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: linear-gradient(90deg, #3b82f6, #6366f1);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    .form-status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .records-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .record-item {
+      border: 1px solid #e2e8f0;
+      background: #f9fbff;
+      border-radius: 10px;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .record-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: #334155;
+      font-size: 12px;
+    }
+
+    .record-scores {
+      color: #1e3a8a;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .record-comment {
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
     .hidden { display: none !important; }
 
     @keyframes panelIn {
@@ -496,6 +665,7 @@ HTML_TEMPLATE = """<!doctype html>
       .sidebar { padding: 12px; }
       .kpi-grid { grid-template-columns: 1fr; }
       .definition-grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .hero-head h2 { font-size: 22px; }
       .hero-title { font-size: 19px; }
     }
@@ -568,6 +738,23 @@ HTML_TEMPLATE = """<!doctype html>
           <div id="scoresArea" class="score-row"></div>
         </article>
 
+        <article class="card span-12">
+          <h2>面试官评分记录</h2>
+          <div class="interview-form">
+            <div class="form-grid">
+              <input id="interviewerName" class="input" type="text" placeholder="面试官姓名" />
+              <input id="scoreTechnical" class="input" type="number" min="0" max="10" step="0.5" placeholder="技术 0-10" />
+              <input id="scoreCommunication" class="input" type="number" min="0" max="10" step="0.5" placeholder="沟通 0-10" />
+              <input id="scoreCultureFit" class="input" type="number" min="0" max="10" step="0.5" placeholder="匹配度 0-10" />
+              <input id="scoreOverall" class="input" type="number" min="0" max="10" step="0.5" placeholder="综合 0-10" />
+            </div>
+            <textarea id="interviewComment" class="textarea" placeholder="输入本轮面试评价、关键观察点和建议"></textarea>
+            <button id="saveInterviewRecord" class="button" type="button">保存评分记录</button>
+            <div id="recordStatus" class="form-status">请选择候选人后录入评分。</div>
+            <div id="interviewRecordsArea" class="records-list"></div>
+          </div>
+        </article>
+
         <article class="card span-6">
           <h2>技能栈</h2>
           <div id="skillsArea" class="list-stack"></div>
@@ -614,6 +801,31 @@ HTML_TEMPLATE = """<!doctype html>
   </div>
 
   <script>
+    function notifyServerClose() {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/close', new Blob([], { type: 'text/plain' }));
+          return;
+        }
+      } catch (error) {
+        // Fallback below.
+      }
+
+      try {
+        fetch('/api/close', {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'Content-Type': 'text/plain' },
+          body: '',
+        });
+      } catch (error) {
+        // Ignore close-time network errors.
+      }
+    }
+
+    window.addEventListener('pagehide', notifyServerClose);
+    window.addEventListener('beforeunload', notifyServerClose);
+
     const state = {
       resumes: [],
       filtered: [],
@@ -645,9 +857,110 @@ HTML_TEMPLATE = """<!doctype html>
       risksArea: document.getElementById('risksArea'),
       rationaleArea: document.getElementById('rationaleArea'),
       questionsArea: document.getElementById('questionsArea'),
+      interviewerName: document.getElementById('interviewerName'),
+      scoreTechnical: document.getElementById('scoreTechnical'),
+      scoreCommunication: document.getElementById('scoreCommunication'),
+      scoreCultureFit: document.getElementById('scoreCultureFit'),
+      scoreOverall: document.getElementById('scoreOverall'),
+      interviewComment: document.getElementById('interviewComment'),
+      saveInterviewRecord: document.getElementById('saveInterviewRecord'),
+      recordStatus: document.getElementById('recordStatus'),
+      interviewRecordsArea: document.getElementById('interviewRecordsArea'),
       rawJson: document.getElementById('rawJson'),
       emptyState: document.getElementById('emptyState'),
     };
+
+    function toScore(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return 0;
+      return Math.max(0, Math.min(10, num));
+    }
+
+    function formatTime(isoText) {
+      const date = new Date(isoText || '');
+      if (Number.isNaN(date.getTime())) return text(isoText, '未知时间');
+      return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function renderInterviewRecords(records) {
+      const list = toArray(records);
+      if (!list.length) {
+        elements.interviewRecordsArea.innerHTML = '<div class="record-item"><div class="record-comment">暂无评分记录</div></div>';
+        return;
+      }
+
+      elements.interviewRecordsArea.innerHTML = list.slice().reverse().map(item => {
+        const scores = item && item.scores ? item.scores : {};
+        return `
+          <div class="record-item">
+            <div class="record-head">
+              <strong>${escapeHtml(text(item.interviewer, '匿名面试官'))}</strong>
+              <span>${escapeHtml(formatTime(item.created_at))}</span>
+            </div>
+            <div class="record-scores">
+              技术 ${toScore(scores.technical).toFixed(1)} · 沟通 ${toScore(scores.communication).toFixed(1)} · 匹配度 ${toScore(scores.culture_fit).toFixed(1)} · 综合 ${toScore(scores.overall).toFixed(1)}
+            </div>
+            <div class="record-comment">${escapeHtml(text(item.comment, '无补充说明'))}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadInterviewRecords(fileName) {
+      if (!fileName) {
+        renderInterviewRecords([]);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/interview-records?file=${encodeURIComponent(fileName)}`);
+        if (!response.ok) {
+          throw new Error('读取评分记录失败');
+        }
+        const payload = await response.json();
+        renderInterviewRecords(payload.records || []);
+      } catch (error) {
+        elements.recordStatus.textContent = error.message || String(error);
+        renderInterviewRecords([]);
+      }
+    }
+
+    async function saveInterviewRecord() {
+      if (!state.selected) {
+        elements.recordStatus.textContent = '请先选择候选人';
+        return;
+      }
+
+      const payload = {
+        file_name: state.selected.file_name,
+        interviewer: text(elements.interviewerName.value, '匿名面试官'),
+        scores: {
+          technical: toScore(elements.scoreTechnical.value),
+          communication: toScore(elements.scoreCommunication.value),
+          culture_fit: toScore(elements.scoreCultureFit.value),
+          overall: toScore(elements.scoreOverall.value),
+        },
+        comment: text(elements.interviewComment.value, ''),
+      };
+
+      try {
+        const response = await fetch('/api/interview-records', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || '保存失败');
+        }
+
+        elements.recordStatus.textContent = '评分记录已保存';
+        elements.interviewComment.value = '';
+        await loadInterviewRecords(state.selected.file_name);
+      } catch (error) {
+        elements.recordStatus.textContent = error.message || String(error);
+      }
+    }
 
     function text(value, fallback = '未填写') {
       return String(value ?? '').trim() || fallback;
@@ -806,6 +1119,9 @@ HTML_TEMPLATE = """<!doctype html>
       const questions = toArray(data.interview_questions);
       renderBadgeList(questions.length ? questions : ['暂无面试问题'], elements.questionsArea);
 
+      elements.recordStatus.textContent = `当前候选人：${resume.file_name}`;
+      loadInterviewRecords(resume.file_name);
+
       elements.rawJson.value = JSON.stringify(data, null, 2);
       highlightActive(resume.file_name);
     }
@@ -886,6 +1202,7 @@ HTML_TEMPLATE = """<!doctype html>
 
     elements.search.addEventListener('input', renderList);
     elements.sort.addEventListener('change', renderList);
+    elements.saveInterviewRecord.addEventListener('click', saveInterviewRecord);
 
     loadResumes().catch(error => {
       elements.heroTitle.textContent = '加载失败';
@@ -973,7 +1290,52 @@ class ResumeViewerHandler(BaseHTTPRequestHandler):
             self._serve_resume_file(file_name)
             return
 
+        if path == "/api/interview-records":
+            query = parse_qs(parsed.query)
+            file_name = query.get("file", [""])[0]
+            if not file_name:
+                serve_json(self, {"records": []})
+                return
+            serve_json(self, {"records": get_interview_records(file_name)})
+            return
+
         self.send_error(404, "Not Found")
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/close":
+            serve_json(self, {"ok": True})
+            request_server_shutdown()
+            return
+
+        if parsed.path != "/api/interview-records":
+            self.send_error(404, "Not Found")
+            return
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            serve_json(self, {"error": "invalid json body"}, 400)
+            return
+
+        file_name = str(payload.get("file_name", "") or "")
+        interviewer = str(payload.get("interviewer", "") or "")
+        scores = payload.get("scores", {})
+        comment = str(payload.get("comment", "") or "")
+
+        try:
+            record = append_interview_record(file_name=file_name, interviewer=interviewer, scores=scores, comment=comment)
+        except ValueError as exc:
+            serve_json(self, {"error": str(exc)}, 400)
+            return
+        except Exception as exc:
+            serve_json(self, {"error": f"failed to save record: {exc}"}, 500)
+            return
+
+        serve_json(self, {"ok": True, "record": record})
 
     def _serve_resume_file(self, file_name: str) -> None:
         if not file_name:
@@ -997,11 +1359,33 @@ class ResumeViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    global CURRENT_SERVER
     host = "127.0.0.1"
-    port = 8000
-    url = f"http://{host}:{port}"
-    server = ThreadingHTTPServer((host, port), ResumeViewerHandler)
+    preferred_port = 8000
+    env_port = os.getenv("VIEWER_PORT", "").strip()
+    if env_port.isdigit():
+        preferred_port = int(env_port)
+    bound_port = preferred_port
+
+    try:
+        server = ThreadingHTTPServer((host, preferred_port), ResumeViewerHandler)
+    except PermissionError:
+        # Some machines restrict specific ports (e.g., WinError 10013).
+        server = ThreadingHTTPServer((host, 0), ResumeViewerHandler)
+        bound_port = int(server.server_address[1])
+    except OSError as exc:
+        # Common bind failures on Windows: 10013 (access denied), 10048 (in use).
+        if getattr(exc, "winerror", None) in (10013, 10048):
+            server = ThreadingHTTPServer((host, 0), ResumeViewerHandler)
+            bound_port = int(server.server_address[1])
+        else:
+            raise
+
+    url = f"http://{host}:{bound_port}"
+    CURRENT_SERVER = server
     print(f"简历 JSON 展示页已启动：{url}")
+    if bound_port != preferred_port:
+        print(f"端口 {preferred_port} 不可用，已自动切换到端口 {bound_port}")
     print(f"正在读取目录：{JSON_DIR}")
 
     # Delay opening slightly to avoid browser race with server readiness.
@@ -1012,6 +1396,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n已停止。")
     finally:
+        CURRENT_SERVER = None
         server.server_close()
 
 
