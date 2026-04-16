@@ -81,6 +81,8 @@ python viewer.py
 - 右侧卡片化展示完整字段
 - 原始 JSON 查看
 
+网页端独立说明见：`README_web.md`
+
 ## 输出说明（JSON v1）
 主要字段包括：
 - candidate_summary

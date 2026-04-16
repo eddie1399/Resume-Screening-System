@@ -1,11 +1,14 @@
 import json
 import os
+import sys
+import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 JSON_DIR = ROOT_DIR / "output" / "json"
 
 
@@ -14,270 +17,333 @@ HTML_TEMPLATE = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>简历 JSON 展示页</title>
+  <title>智能简历分析系统</title>
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #07111f;
-      --bg-2: #0b1b32;
-      --panel: rgba(12, 24, 44, 0.82);
-      --panel-strong: rgba(17, 31, 58, 0.96);
-      --border: rgba(151, 174, 216, 0.18);
-      --text: #ecf4ff;
-      --muted: #9db0d1;
-      --accent: #7dd3fc;
-      --accent-2: #a78bfa;
-      --good: #34d399;
-      --warn: #fbbf24;
-      --bad: #fb7185;
-      --shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+      --bg: #f8fbff;
+      --surface: #ffffff;
+      --line: #e5eaf5;
+      --text: #0f172a;
+      --muted: #64748b;
+      --brand: #2563eb;
+      --brand-2: #4f46e5;
+      --good: #16a34a;
+      --warn: #d97706;
+      --bad: #dc2626;
+      --shadow: 0 10px 30px rgba(37, 99, 235, 0.08);
+      --shadow-soft: 0 6px 20px rgba(15, 23, 42, 0.06);
     }
 
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: "Noto Sans SC", "PingFang SC", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(125, 211, 252, 0.18), transparent 34%),
-        radial-gradient(circle at 80% 10%, rgba(167, 139, 250, 0.16), transparent 28%),
-        linear-gradient(180deg, var(--bg), var(--bg-2));
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.14), transparent 36%),
+        radial-gradient(circle at 92% 0%, rgba(79, 70, 229, 0.12), transparent 30%),
+        linear-gradient(180deg, #f8fbff, #f1f6ff 40%, #f9fbff);
       color: var(--text);
       min-height: 100vh;
+    }
+
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      height: 64px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      color: #1d4ed8;
+      letter-spacing: 0.01em;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 8px 16px rgba(37, 99, 235, 0.28);
+    }
+
+    .nav-meta {
+      color: var(--muted);
+      font-size: 13px;
     }
 
     .app {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr);
-      min-height: 100vh;
+      grid-template-columns: 320px minmax(0, 1fr);
+      min-height: calc(100vh - 64px);
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 18px;
+      gap: 16px;
     }
 
     .sidebar {
       position: sticky;
-      top: 0;
-      height: 100vh;
+      top: 82px;
+      height: calc(100vh - 100px);
       overflow: auto;
-      padding: 24px;
-      border-right: 1px solid var(--border);
-      background: rgba(5, 12, 23, 0.72);
-      backdrop-filter: blur(16px);
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px;
     }
 
     .brand {
-      padding: 18px;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      background: linear-gradient(135deg, rgba(125, 211, 252, 0.12), rgba(167, 139, 250, 0.12));
-      box-shadow: var(--shadow);
-      margin-bottom: 18px;
+      padding: 16px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #eff6ff, #eef2ff);
+      border: 1px solid #dbeafe;
+      margin-bottom: 14px;
     }
 
     .brand h1 {
-      margin: 0 0 8px;
-      font-size: 22px;
-      line-height: 1.2;
+      margin: 0;
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      color: #1d4ed8;
     }
 
     .brand p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 13px;
+      margin: 8px 0 0;
       line-height: 1.6;
+      font-size: 12px;
+      color: #5b6f94;
     }
 
     .sidebar-tools {
       display: grid;
-      gap: 12px;
-      margin-bottom: 18px;
+      gap: 10px;
+      margin-bottom: 14px;
     }
 
     .search-box,
     .select-box {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid #dbe5f6;
+      border-radius: 10px;
+      background: #ffffff;
       color: var(--text);
-      padding: 12px 14px;
+      padding: 10px 12px;
+      font-size: 13px;
       outline: none;
+      width: 100%;
+    }
+
+    .search-box:focus,
+    .select-box:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
     }
 
     .resume-list {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
 
     .resume-item {
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 14px;
-      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid #e2e8f3;
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 12px;
       cursor: pointer;
-      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+      transition: transform 0.16s ease, border-color 0.2s ease, background 0.2s ease;
     }
 
     .resume-item:hover {
       transform: translateY(-1px);
-      border-color: rgba(125, 211, 252, 0.42);
-      background: rgba(125, 211, 252, 0.08);
+      border-color: #93c5fd;
+      background: #f8fbff;
     }
 
     .resume-item.active {
-      border-color: rgba(125, 211, 252, 0.65);
-      background: linear-gradient(135deg, rgba(125, 211, 252, 0.15), rgba(167, 139, 250, 0.14));
-      box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.14) inset;
+      border-color: #60a5fa;
+      background: linear-gradient(130deg, #eff6ff, #eef2ff);
+      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2) inset;
     }
 
     .resume-item .name {
       margin: 0 0 6px;
+      font-size: 14px;
       font-weight: 700;
-      font-size: 15px;
+      color: #111827;
     }
 
     .resume-item .meta {
       margin: 0;
-      color: var(--muted);
       font-size: 12px;
+      color: #64748b;
       line-height: 1.5;
     }
 
     .main {
-      padding: 28px;
+      padding: 0;
+    }
+
+    .hero-head {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.95), rgba(79, 70, 229, 0.9));
+      box-shadow: var(--shadow);
+      padding: 20px;
+      margin-bottom: 16px;
+      animation: panelIn 0.35s ease;
+      color: #f8fbff;
+    }
+
+    .hero-head .caption {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: rgba(237, 242, 255, 0.9);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .hero-head h2 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.25;
+      letter-spacing: 0.01em;
+    }
+
+    .hero-head p {
+      margin: 10px 0 0;
+      max-width: 70ch;
+      color: rgba(232, 238, 255, 0.95);
+      font-size: 14px;
+    }
+
+    .kpi-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 14px;
+      animation: panelIn 0.45s ease both;
+    }
+
+    .kpi-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, #3b82f6, #6366f1);
+    }
+
+    .kpi-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: #13203a;
     }
 
     .hero {
-      display: grid;
-      gap: 18px;
-      grid-template-columns: minmax(0, 1fr) 300px;
-      margin-bottom: 22px;
-      animation: fadeUp 0.5s ease both;
-    }
-
-    .hero-panel,
-    .card {
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-    }
-
-    .hero-panel {
-      padding: 24px;
+      padding: 18px;
+      margin-bottom: 14px;
+      animation: panelIn 0.55s ease both;
     }
 
     .hero-title {
-      margin: 0 0 10px;
-      font-size: 30px;
-      line-height: 1.15;
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.35;
     }
 
     .hero-subtitle {
-      margin: 0;
+      margin: 10px 0 0;
       color: var(--muted);
-      line-height: 1.7;
-      max-width: 64ch;
+      line-height: 1.8;
+      max-width: 72ch;
     }
 
     .hero-badges {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 18px;
+      gap: 8px;
+      margin-top: 12px;
     }
 
-    .badge {
+    .badge,
+    .chip {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text);
-      font-size: 13px;
-    }
-
-    .score-panel {
-      padding: 24px;
-      display: grid;
-      gap: 16px;
-      align-content: start;
-    }
-
-    .score-ring {
-      width: 180px;
-      height: 180px;
-      margin: 0 auto;
-      border-radius: 50%;
-      background: conic-gradient(var(--accent) 0deg, var(--accent-2) 180deg, rgba(255,255,255,0.1) 180deg 360deg);
-      display: grid;
-      place-items: center;
-      position: relative;
-    }
-
-    .score-ring::after {
-      content: "";
-      position: absolute;
-      inset: 14px;
-      border-radius: 50%;
-      background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(12, 24, 44, 0.98));
-      border: 1px solid var(--border);
-    }
-
-    .score-inner {
-      position: relative;
-      z-index: 1;
-      text-align: center;
-    }
-
-    .score-number {
-      display: block;
-      font-size: 48px;
-      font-weight: 800;
-      letter-spacing: -0.05em;
-      line-height: 1;
-    }
-
-    .score-label {
-      display: block;
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .score-stats {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    .stat {
-      padding: 12px;
-      border-radius: 16px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border);
-    }
-
-    .stat .k {
-      display: block;
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      color: #1e3a8a;
       font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-
-    .stat .v {
-      font-size: 18px;
-      font-weight: 700;
+      font-weight: 600;
     }
 
     .content-grid {
       display: grid;
-      gap: 18px;
+      gap: 12px;
       grid-template-columns: repeat(12, minmax(0, 1fr));
+      animation: panelIn 0.65s ease both;
     }
 
     .card {
-      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #1b335a;
+    }
+
+    .section-meta {
+      margin: -4px 0 12px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 13px;
     }
 
     .span-12 { grid-column: span 12; }
@@ -285,126 +351,104 @@ HTML_TEMPLATE = """<!doctype html>
     .span-6 { grid-column: span 6; }
     .span-4 { grid-column: span 4; }
 
-    .card h2 {
-      margin: 0 0 14px;
-      font-size: 18px;
-    }
-
-    .section-meta {
-      margin-top: -8px;
-      margin-bottom: 14px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-    }
-
     .definition-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
     }
 
     .definition-item,
     .list-item {
-      padding: 14px;
-      border-radius: 16px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.07);
+      border: 1px solid #e2e8f0;
+      background: #f9fbff;
+      border-radius: 10px;
+      padding: 12px;
     }
 
     .definition-item .label {
-      display: block;
+      font-size: 11px;
       color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 6px;
+      display: block;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .definition-item .value {
-      font-size: 15px;
+      font-size: 14px;
       line-height: 1.7;
       word-break: break-word;
+      color: #16243b;
     }
 
-    .chips {
+    .chips,
+    .list-stack,
+    .score-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .chip {
-      display: inline-flex;
-      align-items: center;
       gap: 8px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(125, 211, 252, 0.1);
-      border: 1px solid rgba(125, 211, 252, 0.18);
-      color: var(--text);
-      font-size: 13px;
     }
 
-    .list-stack {
+    .list-stack,
+    .score-row {
       display: grid;
-      gap: 12px;
+      gap: 9px;
     }
 
     .list-item {
       display: grid;
-      gap: 8px;
+      gap: 7px;
     }
 
     .list-item strong {
-      font-size: 15px;
+      color: #132746;
+      font-size: 14px;
     }
 
     .list-item p {
       margin: 0;
-      color: var(--muted);
-      line-height: 1.7;
+      color: #4d5d77;
+      line-height: 1.65;
       word-break: break-word;
-    }
-
-    .score-row {
-      display: grid;
-      gap: 12px;
+      font-size: 13px;
     }
 
     .score-line {
       display: grid;
-      gap: 6px;
+      gap: 4px;
     }
 
     .score-line-head {
       display: flex;
       justify-content: space-between;
-      color: var(--muted);
       font-size: 12px;
+      color: #4f6281;
     }
 
     .bar {
-      height: 10px;
+      height: 8px;
       border-radius: 999px;
-      background: rgba(255,255,255,0.07);
+      background: #e8eef9;
       overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid #dce5f4;
     }
 
     .bar > span {
       display: block;
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      background: linear-gradient(90deg, #3b82f6, #6366f1);
     }
 
     .raw-json {
       width: 100%;
-      min-height: 340px;
+      min-height: 320px;
       resize: vertical;
-      border-radius: 18px;
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.28);
-      color: #dceaff;
-      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid #cfdced;
+      background: #0f1728;
+      color: #e5f0ff;
+      padding: 14px;
       font-family: Consolas, "Courier New", monospace;
       font-size: 12px;
       line-height: 1.6;
@@ -412,48 +456,62 @@ HTML_TEMPLATE = """<!doctype html>
     }
 
     .empty {
-      padding: 32px;
-      border: 1px dashed var(--border);
-      border-radius: 24px;
-      color: var(--muted);
+      margin-top: 14px;
+      padding: 20px;
+      border-radius: 10px;
+      border: 1px dashed #b9c9e4;
+      color: #557094;
+      background: #f4f8ff;
       text-align: center;
-      background: rgba(255,255,255,0.03);
     }
 
     .hidden { display: none !important; }
 
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes panelIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
-    @media (max-width: 1100px) {
+    @media (max-width: 1120px) {
       .app { grid-template-columns: 1fr; }
       .sidebar {
         position: relative;
         height: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border);
+        top: 0;
       }
-      .hero { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .definition-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .span-8, .span-6, .span-4 { grid-column: span 12; }
     }
 
-    @media (max-width: 720px) {
-      .main { padding: 16px; }
-      .sidebar { padding: 16px; }
+    @media (max-width: 760px) {
+      .navbar { padding: 0 12px; }
+      .app { padding: 10px; }
+      .sidebar { padding: 12px; }
+      .kpi-grid { grid-template-columns: 1fr; }
       .definition-grid { grid-template-columns: 1fr; }
-      .score-stats { grid-template-columns: 1fr; }
-      .hero-title { font-size: 24px; }
+      .hero-head h2 { font-size: 22px; }
+      .hero-title { font-size: 19px; }
     }
   </style>
 </head>
 <body>
+  <header class="navbar">
+    <div class="nav-brand"><span class="brand-mark"></span>智能简历分析系统</div>
+    <div class="nav-meta">AI 驱动招聘决策面板</div>
+  </header>
+
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <h1>简历 JSON 展示页</h1>
-        <p>自动读取 output/json 目录下的文件。点击左侧条目即可查看对应简历的结构化结果。</p>
+        <h1>候选人列表</h1>
+        <p>参考 example/frontend 视觉风格重写：蓝靛渐变、浅色卡片、清晰层级与高可读性。</p>
       </div>
 
       <div class="sidebar-tools">
@@ -469,27 +527,23 @@ HTML_TEMPLATE = """<!doctype html>
     </aside>
 
     <main class="main">
-      <section class="hero">
-        <div class="hero-panel">
-          <h2 id="heroTitle" class="hero-title">正在加载简历数据</h2>
-          <p id="heroSubtitle" class="hero-subtitle">页面会把 JSON 内容拆成摘要、分数、技能、经历和风险等模块展示，便于快速浏览与对比。</p>
-          <div id="heroBadges" class="hero-badges"></div>
-        </div>
+      <header class="hero-head">
+        <p class="caption">AI Resume Review Workspace</p>
+        <h2>让招聘评估更快、更清晰</h2>
+        <p>从候选人摘要到评分依据、亮点风险与面试问题，一屏聚合，支持检索和排序快速对比。</p>
+      </header>
 
-        <div class="hero-panel score-panel">
-          <div class="score-ring">
-            <div class="score-inner">
-              <span id="scoreNumber" class="score-number">--</span>
-              <span class="score-label">综合评分</span>
-            </div>
-          </div>
-          <div class="score-stats">
-            <div class="stat"><span class="k">判断</span><span id="decisionValue" class="v">--</span></div>
-            <div class="stat"><span class="k">置信度</span><span id="confidenceValue" class="v">--</span></div>
-            <div class="stat"><span class="k">模型</span><span id="modelValue" class="v">--</span></div>
-            <div class="stat"><span class="k">PII</span><span id="piiValue" class="v">--</span></div>
-          </div>
-        </div>
+      <section class="kpi-grid">
+        <article class="kpi-card"><span class="kpi-label">当前候选人评分</span><div id="scoreNumber" class="kpi-value">--</div></article>
+        <article class="kpi-card"><span class="kpi-label">总简历数</span><div id="totalCount" class="kpi-value">0</div></article>
+        <article class="kpi-card"><span class="kpi-label">筛选结果数</span><div id="filteredCount" class="kpi-value">0</div></article>
+        <article class="kpi-card"><span class="kpi-label">平均分</span><div id="averageScore" class="kpi-value">0</div></article>
+      </section>
+
+      <section class="hero">
+        <h2 id="heroTitle" class="hero-title">正在加载简历数据</h2>
+        <p id="heroSubtitle" class="hero-subtitle">页面将按照候选人摘要、评分、维度依据、经历亮点和风险项进行结构化展示。</p>
+        <div id="heroBadges" class="hero-badges"></div>
       </section>
 
       <section class="content-grid">
@@ -497,6 +551,21 @@ HTML_TEMPLATE = """<!doctype html>
           <h2>候选人概览</h2>
           <p id="summaryText" class="section-meta"></p>
           <div id="overviewGrid" class="definition-grid"></div>
+        </article>
+
+        <article class="card span-4">
+          <h2>评估状态</h2>
+          <div class="list-stack">
+            <div class="list-item"><strong>判断</strong><p id="decisionValue">--</p></div>
+            <div class="list-item"><strong>置信度</strong><p id="confidenceValue">--</p></div>
+            <div class="list-item"><strong>模型版本</strong><p id="modelValue">--</p></div>
+            <div class="list-item"><strong>PII 检测</strong><p id="piiValue">--</p></div>
+          </div>
+        </article>
+
+        <article class="card span-8">
+          <h2>分项评分</h2>
+          <div id="scoresArea" class="score-row"></div>
         </article>
 
         <article class="card span-6">
@@ -515,11 +584,6 @@ HTML_TEMPLATE = """<!doctype html>
         </article>
 
         <article class="card span-4">
-          <h2>分项评分</h2>
-          <div id="scoresArea" class="score-row"></div>
-        </article>
-
-        <article class="card span-6">
           <h2>亮点</h2>
           <div id="highlightsArea" class="list-stack"></div>
         </article>
@@ -529,14 +593,14 @@ HTML_TEMPLATE = """<!doctype html>
           <div id="risksArea" class="list-stack"></div>
         </article>
 
-        <article class="card span-12">
-          <h2>评估依据</h2>
-          <div id="rationaleArea" class="list-stack"></div>
+        <article class="card span-6">
+          <h2>面试问题</h2>
+          <div id="questionsArea" class="chips"></div>
         </article>
 
         <article class="card span-12">
-          <h2>面试问题</h2>
-          <div id="questionsArea" class="chips"></div>
+          <h2>评估依据</h2>
+          <div id="rationaleArea" class="list-stack"></div>
         </article>
 
         <article class="card span-12">
@@ -560,6 +624,9 @@ HTML_TEMPLATE = """<!doctype html>
       search: document.getElementById('search'),
       sort: document.getElementById('sort'),
       resumeList: document.getElementById('resumeList'),
+      totalCount: document.getElementById('totalCount'),
+      filteredCount: document.getElementById('filteredCount'),
+      averageScore: document.getElementById('averageScore'),
       heroTitle: document.getElementById('heroTitle'),
       heroSubtitle: document.getElementById('heroSubtitle'),
       heroBadges: document.getElementById('heroBadges'),
@@ -766,6 +833,12 @@ HTML_TEMPLATE = """<!doctype html>
         items = items.slice().sort((a, b) => a.score - b.score);
       }
 
+      const total = state.resumes.length;
+      const avg = total ? Math.round(state.resumes.reduce((sum, item) => sum + Number(item.score || 0), 0) / total) : 0;
+      elements.totalCount.textContent = String(total);
+      elements.filteredCount.textContent = String(items.length);
+      elements.averageScore.textContent = String(avg);
+
       state.filtered = items;
       elements.resumeList.innerHTML = items.map(item => `
         <div class="resume-item ${state.selected && state.selected.file_name === item.file_name ? 'active' : ''}" data-file="${escapeHtml(item.file_name)}">
@@ -926,9 +999,14 @@ class ResumeViewerHandler(BaseHTTPRequestHandler):
 def main() -> None:
     host = "127.0.0.1"
     port = 8000
+    url = f"http://{host}:{port}"
     server = ThreadingHTTPServer((host, port), ResumeViewerHandler)
-    print(f"简历 JSON 展示页已启动：http://{host}:{port}")
+    print(f"简历 JSON 展示页已启动：{url}")
     print(f"正在读取目录：{JSON_DIR}")
+
+    # Delay opening slightly to avoid browser race with server readiness.
+    threading.Timer(0.35, lambda: webbrowser.open(url)).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

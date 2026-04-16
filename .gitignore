@@ -1,6 +1,24 @@
 .env
 __pycache__/
 *.pyc
-input/resume
-output
+*.pyo
+*.pyd
+
+# local IDE
 .vscode/
+
+# runtime data
+input/resume/
+output/
+
+# packaging artifacts
+build/
+dist/
+exe/
+*.spec.bak
+*.spec
+
+# OS/editor temp files
+.DS_Store
+Thumbs.db
+*.log

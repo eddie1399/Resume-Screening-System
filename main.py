@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 sys.path.append("tool")  # 把文件夹加入路径
 import tool.pdf2md as pdf2md
 import json
@@ -8,11 +9,20 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 PROMPT_VERSION = "json_v1_2026-04-02"
+
+BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+
+
+def resource_path(relative_path: str) -> Path:
+  if getattr(sys, "frozen", False):
+    return Path(sys._MEIPASS) / relative_path
+  return BASE_DIR / relative_path
+
 ## 遍历文件夹中的pdf文件，批量转换成markdown文件
 ## 改成相对路径，方便在不同环境运行
-pdf_path = "./input/resume"
-output_path = "./output/resume"
-json_output_path = "./output/json"
+pdf_path = BASE_DIR / "input" / "resume"
+output_path = BASE_DIR / "output" / "resume"
+json_output_path = BASE_DIR / "output" / "json"
 
 for filename in os.listdir(pdf_path):
     if filename.endswith(".pdf"):
@@ -211,10 +221,10 @@ def merge_score_fields(result, score_patch):
 
 ## 导入实验室画像文件 lab_profile.md和简历，读取内容并发送给大模型
 ## 根据实验室画像和简历内容，生成一个匹配度评分，范围是0-100，分数越高表示匹配度越高
-with open("lab_profile.md", "r", encoding="utf-8") as f:
+with open(resource_path("lab_profile.md"), "r", encoding="utf-8") as f:
     lab_profile = f.read()
 ## 打开io_Standardization.md文件，读取内容并发送给大模型
-with open("io_Standardization.md", "r", encoding="utf-8") as f:
+with open(resource_path("io_Standardization.md"), "r", encoding="utf-8") as f:
     io_standardization = f.read()
 os.makedirs(json_output_path, exist_ok=True)
 ## 遍历output文件夹中找到markdown文件，读取内容并发送给大模型
